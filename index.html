@@ -529,27 +529,44 @@
   els.paroToggle.addEventListener("change", function () { state.filters.soloParada = els.paroToggle.checked; render(); });
   els.sortSelect.addEventListener("change", function () { state.filters.sort = els.sortSelect.value; render(); });
 
+  var statusResetTimer = null;
+
+  function wait(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); }
+
   function loadData(manual) {
+    if (statusResetTimer) { clearTimeout(statusResetTimer); statusResetTimer = null; }
     if (manual) { els.refreshBtn.classList.add("spinning"); els.refreshBtn.disabled = true; }
     els.statusDot.className = "status-dot busy";
     els.statusText.textContent = manual ? "Actualizando" : "Cargando";
-    return fetch("./data.json?t=" + Date.now(), { cache: "no-store" })
-      .then(function (res) {
+    var previousGeneratedAt = state.generatedAt;
+    var minDelay = manual ? wait(500) : Promise.resolve();
+
+    return Promise.all([
+      fetch("./data.json?t=" + Date.now(), { cache: "no-store" }).then(function (res) {
         if (!res.ok) throw new Error("HTTP " + res.status);
         return res.json();
-      })
-      .then(function (bundle) {
+      }),
+      minDelay
+    ])
+      .then(function (results) {
+        var bundle = results[0];
         state.records = bundle.records || [];
         state.generatedAt = bundle.generatedAt;
         els.snapshotDate.textContent = fmtDate(state.generatedAt);
         els.statusDot.className = "status-dot live";
-        els.statusText.textContent = "Actualizado";
+        if (manual) {
+          var hayNovedades = previousGeneratedAt !== state.generatedAt;
+          els.statusText.textContent = hayNovedades ? "¡Datos nuevos!" : "Ya estaba al día";
+          statusResetTimer = setTimeout(function () { els.statusText.textContent = "Actualizado"; }, 2600);
+        } else {
+          els.statusText.textContent = "Actualizado";
+        }
         render();
       })
       .catch(function (err) {
         console.error("No se pudieron cargar los datos", err);
         els.statusDot.className = "status-dot bad";
-        els.statusText.textContent = "Sin datos";
+        els.statusText.textContent = "Sin conexión";
         if (!state.records.length) {
           els.listArea.innerHTML = '<div class="empty">No se pudo cargar data.json. Comprueba que la automatización de GitHub Actions se ha ejecutado al menos una vez.</div>';
         }
