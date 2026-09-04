@@ -4,6 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Informe de Averías ATIA</title>
+<script>
+(function () {
+  try {
+    var t = localStorage.getItem("atia-theme");
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+})();
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
@@ -107,6 +115,15 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { .btn.spinning .icon { animation: none; } }
 
+  .theme-toggle { padding: 7px 8px; }
+  .theme-toggle .icon-moon { display: none; }
+  :root[data-theme="dark"] .theme-toggle .icon-sun { display: none; }
+  :root[data-theme="dark"] .theme-toggle .icon-moon { display: block; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .theme-toggle .icon-sun { display: none; }
+    :root:not([data-theme="light"]) .theme-toggle .icon-moon { display: block; }
+  }
+
   /* ---------- classification tabs ---------- */
   .tabs { display: flex; gap: 4px; padding: 14px 0 10px; overflow-x: auto; }
   .tab {
@@ -198,14 +215,24 @@
   .detail-desc p { font-size: 14px; line-height: 1.55; white-space: pre-wrap; margin: 0 0 16px; }
 
   .attach-item { display: flex; align-items: center; gap: 10px; border: 1px solid var(--line); border-radius: 8px; padding: 8px; margin-bottom: 8px; background: var(--brand-tint); }
-  .attach-thumb { width: 56px; height: 56px; border-radius: 6px; overflow: hidden; background: var(--surface); border: 1px solid var(--line); flex: none; display: flex; align-items: center; justify-content: center; }
-  .attach-thumb img, .attach-thumb video { width: 100%; height: 100%; object-fit: cover; }
-  .attach-thumb .icon { width: 22px; height: 22px; color: var(--ink-soft); }
+  .attach-thumb { width: 72px; height: 72px; border-radius: 6px; overflow: hidden; background: var(--surface); border: 1px solid var(--line); flex: none; display: flex; align-items: center; justify-content: center; position: relative; text-decoration: none; }
+  .attach-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .attach-thumb-fallback { display: none; }
   .attach-item.broken .attach-thumb-media { display: none; }
+  .attach-item.broken .attach-thumb-fallback { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; }
+  .attach-thumb .icon { width: 22px; height: 22px; color: var(--ink-soft); }
   .attach-info { min-width: 0; flex: 1; }
   .attach-name { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
   .attach-open { font-size: 12.5px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px; text-decoration: none; }
   .attach-open:hover { text-decoration: underline; }
+
+  .attach-item.attach-video { flex-direction: column; align-items: stretch; }
+  .attach-video-player { width: 100%; max-height: 260px; border-radius: 8px; background: #000; display: block; }
+  .attach-item.attach-video.broken .attach-video-player { display: none; }
+  .attach-video-fallback { display: none; align-items: center; gap: 8px; padding: 14px; border: 1px dashed var(--line); border-radius: 8px; color: var(--ink-soft); font-size: 13px; background: var(--surface); }
+  .attach-item.attach-video.broken .attach-video-fallback { display: flex; }
+  .attach-video-fallback .icon { width: 20px; height: 20px; flex: none; }
+  .attach-item.attach-video .attach-info { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 
   .empty { text-align: center; padding: 40px 20px; color: var(--ink-soft); border: 1px dashed var(--line); border-radius: 9px; background: var(--surface); grid-column: 1 / -1; }
 
@@ -245,6 +272,10 @@
       <span class="brand-sub">Informe de averías</span>
     </div>
     <span class="status-pill" id="statusPill"><span class="status-dot live"></span><span id="statusText">Cargando</span></span>
+    <button class="btn theme-toggle" id="themeToggle" title="Cambiar entre modo diurno y nocturno" aria-label="Cambiar entre modo diurno y nocturno">
+      <svg class="icon icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+      <svg class="icon icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"/></svg>
+    </button>
     <button class="btn" id="refreshBtn" title="Comprobar si hay datos más recientes">
       <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/></svg>
       Actualizar
@@ -297,8 +328,20 @@
 
   var ICONS = {
     ext: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="13" height="13"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="M10 14 21 3"/></svg>',
-    image: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="1.5"/><path d="m21 15-5-5-11 11"/></svg>'
+    image: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="1.5"/><path d="m21 15-5-5-11 11"/></svg>',
+    video: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.934a.5.5 0 0 0-.777-.416L16 11"/><rect x="2" y="6" width="14" height="12" rx="2"/></svg>'
   };
+
+  function isVideoAttachment(a) { return (a && a.type || "").indexOf("video") === 0; }
+
+  function attachmentsLabel(attachments) {
+    var hasImage = attachments.some(function (a) { return !isVideoAttachment(a); });
+    var hasVideo = attachments.some(isVideoAttachment);
+    var n = attachments.length;
+    if (hasVideo && !hasImage) return n > 1 ? "Vídeos" : "Vídeo";
+    if (hasImage && !hasVideo) return n > 1 ? "Imágenes" : "Imagen";
+    return "Adjuntos";
+  }
 
   var state = {
     records: [],
@@ -317,8 +360,21 @@
     snapshotDate: document.getElementById("snapshotDate"),
     statusDot: document.querySelector("#statusPill .status-dot"),
     statusText: document.getElementById("statusText"),
-    refreshBtn: document.getElementById("refreshBtn")
+    refreshBtn: document.getElementById("refreshBtn"),
+    themeToggle: document.getElementById("themeToggle")
   };
+
+  var THEME_KEY = "atia-theme";
+  function currentTheme() {
+    var attr = document.documentElement.getAttribute("data-theme");
+    if (attr === "light" || attr === "dark") return attr;
+    return (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
+  }
+  els.themeToggle.addEventListener("click", function () {
+    var next = currentTheme() === "dark" ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    try { localStorage.setItem(THEME_KEY, next); } catch (e) {}
+  });
 
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
@@ -380,13 +436,20 @@
   function attachmentBlock(attachments) {
     if (!attachments || !attachments.length) return "";
     return '<div class="detail-attach"><h4>Adjuntos</h4>' + attachments.map(function (a) {
-      var isVideo = (a.type || "").indexOf("video") === 0;
-      var mediaHtml = isVideo
-        ? '<video class="attach-thumb-media" muted preload="metadata" src="' + esc(a.url) + '" onerror="this.closest(\'.attach-item\').classList.add(\'broken\')"></video>'
-        : '<img class="attach-thumb-media" alt="" loading="lazy" src="' + esc(a.url) + '" onerror="this.closest(\'.attach-item\').classList.add(\'broken\')">';
+      if (isVideoAttachment(a)) {
+        return '<div class="attach-item attach-video">' +
+          '<video class="attach-video-player" controls preload="metadata" playsinline src="' + esc(a.url) + '" onerror="this.closest(\'.attach-item\').classList.add(\'broken\')"></video>' +
+          '<div class="attach-video-fallback"><span class="icon">' + ICONS.video + '</span><span>Este vídeo no se puede reproducir aquí — <a class="attach-open" href="' + esc(a.url) + '" target="_blank" rel="noopener">ábrelo en una pestaña</a>.</span></div>' +
+          '<div class="attach-info"><span class="attach-name">' + esc(a.filename || "Vídeo") + '</span>' +
+          '<a class="attach-open" href="' + esc(a.url) + '" target="_blank" rel="noopener">Abrir ' + ICONS.ext + '</a></div>' +
+          '</div>';
+      }
       return '<div class="attach-item">' +
-        '<div class="attach-thumb">' + mediaHtml + '<span class="attach-thumb-fallback icon">' + ICONS.image + '</span></div>' +
-        '<div class="attach-info"><span class="attach-name">' + esc(a.filename || (isVideo ? "Vídeo" : "Imagen")) + '</span>' +
+        '<a class="attach-thumb" href="' + esc(a.url) + '" target="_blank" rel="noopener" aria-label="Ver imagen completa">' +
+          '<img class="attach-thumb-media" alt="" loading="lazy" src="' + esc(a.url) + '" onerror="this.closest(\'.attach-item\').classList.add(\'broken\')">' +
+          '<span class="attach-thumb-fallback icon">' + ICONS.image + '</span>' +
+        '</a>' +
+        '<div class="attach-info"><span class="attach-name">' + esc(a.filename || "Imagen") + '</span>' +
         '<a class="attach-open" href="' + esc(a.url) + '" target="_blank" rel="noopener">Abrir ' + ICONS.ext + '</a></div>' +
         '</div>';
     }).join("") + "</div>";
@@ -407,7 +470,7 @@
             '<span class="ticket-code mono">' + esc(ticketNumber(r)) + '</span>' +
             '<span class="row-badges">' +
               (paro === "Sí" ? '<span class="tag tag-paro">Parada</span>' : "") +
-              (attachments.length ? '<span class="tag tag-media">' + esc(attachments.length > 1 ? "Imágenes" : "Imagen") + '</span>' : "") +
+              (attachments.length ? '<span class="tag tag-media">' + (attachments.some(isVideoAttachment) ? ICONS.video : ICONS.image) + esc(attachmentsLabel(attachments)) + '</span>' : "") +
               '<span class="ticket-date">' + esc(fmtDateShort(r.fecha)) + '</span>' +
               '<svg class="icon chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>' +
             '</span>' +
