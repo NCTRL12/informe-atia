@@ -530,10 +530,21 @@
   els.sortSelect.addEventListener("change", function () { state.filters.sort = els.sortSelect.value; render(); });
 
   var statusResetTimer = null;
+  var loadSeq = 0;
+  var manualBusy = false;
 
   function wait(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); }
 
   function loadData(manual) {
+    // Never let a silent background refresh interrupt a manual click in progress.
+    if (!manual && manualBusy) return Promise.resolve();
+    if (manual) manualBusy = true;
+    // Each call gets its own sequence number. If a newer call starts before this
+    // one's fetch resolves (e.g. the automatic background refresh overlaps with a
+    // manual click), this older call's result is discarded instead of overwriting
+    // the newer call's status message — otherwise the manual click's feedback gets
+    // silently stomped and looks like the button "did nothing".
+    var mySeq = ++loadSeq;
     if (statusResetTimer) { clearTimeout(statusResetTimer); statusResetTimer = null; }
     if (manual) { els.refreshBtn.classList.add("spinning"); els.refreshBtn.disabled = true; }
     els.statusDot.className = "status-dot busy";
@@ -549,6 +560,7 @@
       minDelay
     ])
       .then(function (results) {
+        if (mySeq !== loadSeq) return; // superseded by a newer load; ignore this stale result
         var bundle = results[0];
         state.records = bundle.records || [];
         state.generatedAt = bundle.generatedAt;
@@ -564,6 +576,7 @@
         render();
       })
       .catch(function (err) {
+        if (mySeq !== loadSeq) return; // superseded; a newer load will report its own status
         console.error("No se pudieron cargar los datos", err);
         els.statusDot.className = "status-dot bad";
         els.statusText.textContent = "Sin conexión";
@@ -572,7 +585,7 @@
         }
       })
       .finally(function () {
-        if (manual) { els.refreshBtn.classList.remove("spinning"); els.refreshBtn.disabled = false; }
+        if (manual) { els.refreshBtn.classList.remove("spinning"); els.refreshBtn.disabled = false; manualBusy = false; }
       });
   }
 
