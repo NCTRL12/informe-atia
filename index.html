@@ -234,6 +234,31 @@
   .attach-video-fallback .icon { width: 20px; height: 20px; flex: none; }
   .attach-item.attach-video .attach-info { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 
+  .detail-footer { margin-top: 4px; padding-top: 12px; border-top: 1px solid var(--line); display: flex; justify-content: flex-end; }
+  .btn-danger { border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); color: var(--danger); background: var(--surface); }
+  .btn-danger:hover { border-color: var(--danger); background: var(--danger-bg); color: var(--danger); }
+  .btn-danger:disabled { opacity: .55; cursor: default; }
+
+  .modal-overlay {
+    position: fixed; inset: 0; background: color-mix(in srgb, black 45%, transparent);
+    align-items: center; justify-content: center; padding: 16px; z-index: 50;
+  }
+  .modal-overlay[hidden] { display: none; }
+  .modal-overlay:not([hidden]) { display: flex; }
+  .modal-card {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow);
+    padding: 20px; width: 100%; max-width: 340px;
+  }
+  .modal-card h3 { margin: 0 0 6px; font-size: 16px; }
+  .modal-card p { margin: 0 0 14px; font-size: 13.5px; color: var(--ink-soft); line-height: 1.5; }
+  .modal-input {
+    width: 100%; font: inherit; font-size: 14px; color: var(--ink); background: var(--paper);
+    border: 1px solid var(--line); border-radius: 7px; padding: 9px 10px; outline: none;
+  }
+  .modal-input:focus-visible { border-color: var(--focus); }
+  .modal-error { color: var(--danger); font-size: 12.5px; min-height: 16px; margin: 8px 0 0; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+
   .empty { text-align: center; padding: 40px 20px; color: var(--ink-soft); border: 1px dashed var(--line); border-radius: 9px; background: var(--surface); grid-column: 1 / -1; }
 
   .banner { border: 1px solid var(--line); background: var(--surface); border-radius: 9px; padding: 16px; margin-bottom: 16px; display: flex; gap: 12px; align-items: flex-start; }
@@ -320,6 +345,19 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="deleteModal" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="deleteModalTitle">
+    <h3 id="deleteModalTitle">Eliminar aviso</h3>
+    <p>Esta acción borra el aviso también de Airtable y no se puede deshacer. Introduce la contraseña para confirmar.</p>
+    <input type="password" class="modal-input" id="deletePassword" placeholder="Contraseña" autocomplete="off">
+    <p class="modal-error" id="deleteError"></p>
+    <div class="modal-actions">
+      <button class="btn" id="deleteCancelBtn">Cancelar</button>
+      <button class="btn btn-danger" id="deleteConfirmBtn">Eliminar</button>
+    </div>
+  </div>
+</div>
+
 <script>
 (function () {
   "use strict";
@@ -361,7 +399,12 @@
     statusDot: document.querySelector("#statusPill .status-dot"),
     statusText: document.getElementById("statusText"),
     refreshBtn: document.getElementById("refreshBtn"),
-    themeToggle: document.getElementById("themeToggle")
+    themeToggle: document.getElementById("themeToggle"),
+    deleteModal: document.getElementById("deleteModal"),
+    deletePassword: document.getElementById("deletePassword"),
+    deleteError: document.getElementById("deleteError"),
+    deleteCancelBtn: document.getElementById("deleteCancelBtn"),
+    deleteConfirmBtn: document.getElementById("deleteConfirmBtn")
   };
 
   var THEME_KEY = "atia-theme";
@@ -496,6 +539,9 @@
           '<dl class="dl">' + rows.map(function (row) { return "<dt>" + row[0] + "</dt><dd>" + row[1] + "</dd>"; }).join("") + '</dl>' +
           '<div class="detail-desc"><h4>Descripción</h4><p>' + esc(r.descripcion || "Sin descripción.") + '</p></div>' +
           attachmentBlock(attachments) +
+          '<div class="detail-footer">' +
+            '<button class="btn btn-danger" data-delete-id="' + esc(id) + '">Eliminar aviso</button>' +
+          '</div>' +
         '</div>';
     }
 
@@ -516,6 +562,12 @@
         var id = btn.getAttribute("data-id");
         if (state.expanded[id]) delete state.expanded[id]; else state.expanded[id] = true;
         render();
+      });
+    });
+    Array.prototype.forEach.call(els.listArea.querySelectorAll("[data-delete-id]"), function (btn) {
+      btn.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        openDeleteModal(btn.getAttribute("data-delete-id"));
       });
     });
   }
@@ -590,6 +642,79 @@
   }
 
   els.refreshBtn.addEventListener("click", function () { loadData(true); });
+
+  // ---------- eliminar aviso ----------
+  // URL del Worker de Cloudflare que guarda la contraseña y el token de
+  // Airtable en secreto y hace el borrado real. Hasta que esté desplegado,
+  // se deja vacío y el botón avisa en vez de fallar en silencio.
+  var DELETE_ENDPOINT = "";
+
+  var deleteTargetId = null;
+
+  function openDeleteModal(id) {
+    deleteTargetId = id;
+    els.deletePassword.value = "";
+    els.deleteError.textContent = "";
+    els.deleteModal.hidden = false;
+    els.deletePassword.focus();
+  }
+
+  function closeDeleteModal() {
+    els.deleteModal.hidden = true;
+    deleteTargetId = null;
+  }
+
+  function confirmDelete() {
+    if (!deleteTargetId) return;
+    if (!DELETE_ENDPOINT) {
+      els.deleteError.textContent = "El borrado aún no está configurado.";
+      return;
+    }
+    var password = els.deletePassword.value;
+    if (!password) {
+      els.deleteError.textContent = "Escribe la contraseña.";
+      return;
+    }
+    els.deleteError.textContent = "";
+    els.deleteConfirmBtn.disabled = true;
+    els.deleteCancelBtn.disabled = true;
+    els.deleteConfirmBtn.textContent = "Eliminando…";
+
+    fetch(DELETE_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: password, recordId: deleteTargetId })
+    })
+      .then(function (res) {
+        return res.json().catch(function () { return {}; }).then(function (data) {
+          if (!res.ok) throw new Error(data && data.error ? data.error : ("HTTP " + res.status));
+          return data;
+        });
+      })
+      .then(function () {
+        state.records = state.records.filter(function (r) { return r.id !== deleteTargetId; });
+        delete state.expanded[deleteTargetId];
+        closeDeleteModal();
+        render();
+        els.statusText.textContent = "Aviso eliminado";
+        if (statusResetTimer) clearTimeout(statusResetTimer);
+        statusResetTimer = setTimeout(function () { els.statusText.textContent = "Actualizado"; }, 2600);
+      })
+      .catch(function (err) {
+        els.deleteError.textContent = err.message === "Contraseña incorrecta" ? "Contraseña incorrecta." : "No se pudo eliminar. Inténtalo de nuevo.";
+      })
+      .finally(function () {
+        els.deleteConfirmBtn.disabled = false;
+        els.deleteCancelBtn.disabled = false;
+        els.deleteConfirmBtn.textContent = "Eliminar";
+      });
+  }
+
+  els.deleteCancelBtn.addEventListener("click", closeDeleteModal);
+  els.deleteModal.addEventListener("click", function (ev) { if (ev.target === els.deleteModal) closeDeleteModal(); });
+  els.deleteConfirmBtn.addEventListener("click", confirmDelete);
+  els.deletePassword.addEventListener("keydown", function (ev) { if (ev.key === "Enter") confirmDelete(); });
+  document.addEventListener("keydown", function (ev) { if (ev.key === "Escape" && !els.deleteModal.hidden) closeDeleteModal(); });
 
   loadData(false);
   setInterval(function () { if (!document.hidden) loadData(false); }, 300000);
