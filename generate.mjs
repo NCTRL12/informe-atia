@@ -1,6 +1,6 @@
 // Descarga el registro de averías ATIA desde Airtable y genera data.json
 // para que index.html lo muestre. Lo ejecuta automáticamente el workflow
-// de GitHub Actions (.github/workflows/update.yml) cada hora.
+// de GitHub Actions (.github/workflows/update.yml) cada 5 minutos.
 //
 // Requiere Node 18+ (fetch incluido) y la variable de entorno AIRTABLE_TOKEN
 // con un Personal Access Token de Airtable con permiso de lectura
@@ -91,11 +91,29 @@ const records = raw.map((r) => {
 
 records.sort((a, b) => String(b.fecha || "").localeCompare(String(a.fecha || "")));
 
-const bundle = {
-  generatedAt: new Date().toISOString(),
-  records
-};
-
 const fs = await import("node:fs/promises");
-await fs.writeFile("data.json", JSON.stringify(bundle), "utf8");
-console.log(`Guardados ${records.length} registros en data.json.`);
+
+// Como esto se ejecuta cada 5 minutos, no queremos reescribir data.json (y
+// provocar un commit + un despliegue de GitHub Pages) cuando no ha cambiado
+// nada. Si los avisos son idénticos a los del archivo anterior, conservamos
+// su generatedAt para que el archivo quede byte a byte igual y el workflow
+// no publique nada.
+let previous = null;
+try {
+  previous = JSON.parse(await fs.readFile("data.json", "utf8"));
+} catch (e) {
+  // No existe todavía o está corrupto: lo generamos de cero.
+}
+
+const sinCambios =
+  previous &&
+  previous.generatedAt &&
+  JSON.stringify(previous.records) === JSON.stringify(records);
+
+if (sinCambios) {
+  console.log("Los avisos no han cambiado; se mantiene data.json tal cual.");
+} else {
+  const bundle = { generatedAt: new Date().toISOString(), records };
+  await fs.writeFile("data.json", JSON.stringify(bundle), "utf8");
+  console.log(`Guardados ${records.length} registros en data.json.`);
+}
