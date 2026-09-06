@@ -314,8 +314,8 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
     </div>
     <div>
-      <h3 id="snapshotTitle">Se actualiza solo cada hora</h3>
-      <p>Estos datos se sincronizan automáticamente con Airtable una vez por hora. Última actualización: <strong id="snapshotDate">—</strong>. Los enlaces a fotos y vídeos de Airtable caducan pasadas unas horas, así que algunos adjuntos antiguos pueden no abrirse — pulsa «Actualizar» para comprobar si ya hay una versión más reciente.</p>
+      <h3 id="snapshotTitle">Se actualiza solo cada pocos minutos</h3>
+      <p>Estos datos se sincronizan automáticamente con Airtable cada 5 minutos aproximadamente. Última actualización: <strong id="snapshotDate">—</strong>. Los enlaces a fotos y vídeos de Airtable caducan pasadas unas horas, así que algunos adjuntos antiguos pueden no abrirse — pulsa «Actualizar» para traer la versión más reciente.</p>
     </div>
   </div>
 
@@ -435,6 +435,18 @@
     catch (e) { return iso; }
   }
   function ticketNumber(r) { return "AV-" + (r.num != null ? r.num : "?"); }
+
+  // Antigüedad de los datos en lenguaje llano, para que el botón "Actualizar"
+  // siempre diga algo útil aunque no haya novedades.
+  function ageLabel(iso) {
+    if (!iso) return "";
+    var mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+    if (mins <= 0) return "ahora mismo";
+    if (mins === 1) return "hace 1 min";
+    if (mins < 60) return "hace " + mins + " min";
+    var h = Math.round(mins / 60);
+    return h === 1 ? "hace 1 h" : "hace " + h + " h";
+  }
 
   function filteredRecords() {
     var f = state.filters;
@@ -620,8 +632,8 @@
         els.statusDot.className = "status-dot live";
         if (manual) {
           var hayNovedades = previousGeneratedAt !== state.generatedAt;
-          els.statusText.textContent = hayNovedades ? "¡Datos nuevos!" : "Ya estaba al día";
-          statusResetTimer = setTimeout(function () { els.statusText.textContent = "Actualizado"; }, 2600);
+          els.statusText.textContent = hayNovedades ? "¡Datos nuevos!" : "Al día · " + ageLabel(state.generatedAt);
+          statusResetTimer = setTimeout(function () { els.statusText.textContent = "Actualizado"; }, 3200);
         } else {
           els.statusText.textContent = "Actualizado";
         }
