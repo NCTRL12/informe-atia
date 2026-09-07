@@ -362,7 +362,8 @@
     <h3 id="deleteModalTitle">Eliminar aviso</h3>
     <p>Esta acción borra el aviso también de Airtable y no se puede deshacer. Introduce la contraseña para confirmar.</p>
     <div class="modal-field">
-      <input type="password" class="modal-input" id="deletePassword" placeholder="Contraseña" autocomplete="off">
+      <input type="password" class="modal-input" id="deletePassword" placeholder="Contraseña"
+             autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
       <button type="button" class="modal-reveal" id="deleteReveal" aria-label="Mostrar contraseña" aria-pressed="false" title="Mostrar contraseña"></button>
     </div>
     <p class="modal-error" id="deleteError"></p>
@@ -676,7 +677,31 @@
       });
   }
 
-  els.refreshBtn.addEventListener("click", function () { loadData(true); });
+  // ---------- comprobar que el movil no se ha quedado con una copia vieja ----------
+  // Los navegadores de movil guardan la pagina en cache y pueden seguir usando
+  // una version antigua durante dias, con lo que arreglos como este no llegan
+  // nunca. Al pulsar "Actualizar" miramos que version hay publicada y, si es
+  // distinta, recargamos saltandonos la cache. Solo una vez por sesion, para
+  // que no pueda quedarse recargando en bucle.
+  var VERSION = "2026-09-08a";
+  function comprobarVersion() {
+    var yaRecargado = false;
+    try { yaRecargado = sessionStorage.getItem("atia-recargado") === "1"; } catch (e) {}
+    if (yaRecargado) return;
+    fetch("./index.html?v=" + Date.now(), { cache: "no-store" })
+      .then(function (r) { return r.ok ? r.text() : null; })
+      .then(function (t) {
+        if (!t) return;
+        var m = t.match(/var VERSION = "([^"]+)"/);
+        if (!m || m[1] === VERSION) return;
+        try { sessionStorage.setItem("atia-recargado", "1"); } catch (e) {}
+        els.statusText.textContent = "Versión nueva · recargando";
+        setTimeout(function () { location.replace(location.pathname + "?v=" + Date.now()); }, 700);
+      })
+      .catch(function () {});
+  }
+
+  els.refreshBtn.addEventListener("click", function () { comprobarVersion(); loadData(true); });
 
   // ---------- eliminar aviso ----------
   // URL del Worker de Cloudflare que guarda la contraseña y el token de
@@ -736,7 +761,8 @@
       els.deleteError.textContent = "El borrado aún no está configurado.";
       return;
     }
-    var password = els.deletePassword.value;
+    // Los teclados de movil anaden a menudo un espacio al final al autocompletar.
+    var password = els.deletePassword.value.trim();
     if (!password) {
       els.deleteError.textContent = "Escribe la contraseña.";
       return;
@@ -767,7 +793,19 @@
         statusResetTimer = setTimeout(function () { els.statusText.textContent = "Actualizado"; }, 2600);
       })
       .catch(function (err) {
-        els.deleteError.textContent = err.message === "Contraseña incorrecta" ? "Contraseña incorrecta." : "No se pudo eliminar. Inténtalo de nuevo.";
+        // El Worker responde "Contrasena incorrecta" (sin ñ), asi que comparamos
+        // sin acentos y sin distinguir mayusculas; antes nunca coincidia y toda
+        // contrasena mal escrita salia como un error generico.
+        var msg = String((err && err.message) || "");
+        if (/contrase/i.test(msg)) {
+          els.deleteError.textContent = "Contraseña incorrecta.";
+        } else if (/AIRTABLE_TOKEN|DELETE_PASSWORD/i.test(msg)) {
+          els.deleteError.textContent = "El servidor no está configurado. Avisa al administrador.";
+        } else if (/Failed to fetch|NetworkError|Load failed/i.test(msg)) {
+          els.deleteError.textContent = "Sin conexión. Comprueba internet y reinténtalo.";
+        } else {
+          els.deleteError.textContent = "No se pudo eliminar: " + (msg || "error desconocido");
+        }
       })
       .finally(function () {
         els.deleteConfirmBtn.disabled = false;
