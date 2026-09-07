@@ -256,6 +256,18 @@
     border: 1px solid var(--line); border-radius: 7px; padding: 9px 10px; outline: none;
   }
   .modal-input:focus-visible { border-color: var(--focus); }
+  /* El campo de contraseña lleva dentro un botón de ojo para verla mientras se escribe. */
+  .modal-field { position: relative; }
+  .modal-field .modal-input { padding-right: 44px; }
+  .modal-reveal {
+    position: absolute; right: 5px; top: 50%; transform: translateY(-50%);
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 32px; height: 32px; padding: 0; border: 0; border-radius: 6px;
+    background: transparent; color: var(--ink-soft); cursor: pointer;
+  }
+  .modal-reveal:hover { color: var(--ink); background: var(--brand-tint); }
+  .modal-reveal:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+  .modal-reveal svg { width: 18px; height: 18px; display: block; }
   .modal-error { color: var(--danger); font-size: 12.5px; min-height: 16px; margin: 8px 0 0; }
   .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 
@@ -349,7 +361,10 @@
   <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="deleteModalTitle">
     <h3 id="deleteModalTitle">Eliminar aviso</h3>
     <p>Esta acción borra el aviso también de Airtable y no se puede deshacer. Introduce la contraseña para confirmar.</p>
-    <input type="password" class="modal-input" id="deletePassword" placeholder="Contraseña" autocomplete="off">
+    <div class="modal-field">
+      <input type="password" class="modal-input" id="deletePassword" placeholder="Contraseña" autocomplete="off">
+      <button type="button" class="modal-reveal" id="deleteReveal" aria-label="Mostrar contraseña" aria-pressed="false" title="Mostrar contraseña"></button>
+    </div>
     <p class="modal-error" id="deleteError"></p>
     <div class="modal-actions">
       <button class="btn" id="deleteCancelBtn">Cancelar</button>
@@ -402,6 +417,7 @@
     themeToggle: document.getElementById("themeToggle"),
     deleteModal: document.getElementById("deleteModal"),
     deletePassword: document.getElementById("deletePassword"),
+    deleteReveal: document.getElementById("deleteReveal"),
     deleteError: document.getElementById("deleteError"),
     deleteCancelBtn: document.getElementById("deleteCancelBtn"),
     deleteConfirmBtn: document.getElementById("deleteConfirmBtn")
@@ -670,8 +686,39 @@
 
   var deleteTargetId = null;
 
+  // Iconos del botón "ver contraseña": ojo abierto = pulsa para mostrarla,
+  // ojo tachado = ahora se ve, pulsa para volver a ocultarla.
+  var ICONO_OJO =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M2 12s3.8-7 10-7 10 7 10 7-3.8 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>';
+  var ICONO_OJO_TACHADO =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M2 12s3.8-7 10-7c2 0 3.7.7 5.1 1.6M22 12s-3.8 7-10 7c-2 0-3.7-.7-5.1-1.6"/>' +
+    '<path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/><path d="M3 3l18 18"/></svg>';
+
+  function pintarBotonVer() {
+    var visible = els.deletePassword.type === "text";
+    var texto = visible ? "Ocultar contraseña" : "Mostrar contraseña";
+    els.deleteReveal.innerHTML = visible ? ICONO_OJO_TACHADO : ICONO_OJO;
+    els.deleteReveal.setAttribute("aria-label", texto);
+    els.deleteReveal.setAttribute("title", texto);
+    els.deleteReveal.setAttribute("aria-pressed", visible ? "true" : "false");
+  }
+
+  function alternarVerContrasena() {
+    els.deletePassword.type = els.deletePassword.type === "password" ? "text" : "password";
+    pintarBotonVer();
+    // Devolvemos el cursor al final del texto para poder seguir escribiendo.
+    els.deletePassword.focus();
+    var n = els.deletePassword.value.length;
+    try { els.deletePassword.setSelectionRange(n, n); } catch (e) {}
+  }
+
   function openDeleteModal(id) {
     deleteTargetId = id;
+    // La contraseña siempre empieza oculta, aunque la dejaras visible la vez anterior.
+    els.deletePassword.type = "password";
+    pintarBotonVer();
     els.deletePassword.value = "";
     els.deleteError.textContent = "";
     els.deleteModal.hidden = false;
@@ -733,6 +780,8 @@
   els.deleteModal.addEventListener("click", function (ev) { if (ev.target === els.deleteModal) closeDeleteModal(); });
   els.deleteConfirmBtn.addEventListener("click", confirmDelete);
   els.deletePassword.addEventListener("keydown", function (ev) { if (ev.key === "Enter") confirmDelete(); });
+  els.deleteReveal.addEventListener("click", alternarVerContrasena);
+  pintarBotonVer();
   document.addEventListener("keydown", function (ev) { if (ev.key === "Escape" && !els.deleteModal.hidden) closeDeleteModal(); });
 
   loadData(false);
