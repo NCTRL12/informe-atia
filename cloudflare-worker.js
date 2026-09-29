@@ -28,6 +28,10 @@ const ALLOWED_ORIGIN = "https://nctrl12.github.io";
 // tocar nada aqui si se recrea: basta con que exista una tabla asi llamada.
 const TABLA_CLAVES = "Claves";
 const SECCIONES = ["eliminar", "estado"];
+// Airtable crea las columnas por defecto con nombres distintos segun el idioma
+// de la cuenta, asi que aceptamos las dos formas y no obligamos a renombrar.
+const CAMPOS_CLAVE = ["Name", "Nombre"];
+const CAMPOS_VALOR = ["Notes", "Notas"];
 const BASE_ID = "appBQRwCmRwyzg180";
 const TABLE_ID = "tblj3eagIgj8WOc5d";
 
@@ -76,7 +80,15 @@ function text(v) {
   return typeof v === "string" ? v.trim() : String(v);
 }
 
-// Devuelve { eliminar: {id, valor}, estado: {...} } o null si la tabla no existe.
+function campoPresente(fields, candidatos) {
+  for (const c of candidatos) {
+    if (Object.prototype.hasOwnProperty.call(fields, c)) return c;
+  }
+  return null;
+}
+
+// Devuelve { filas: { eliminar: {id, valor}, ... }, campoClave, campoValor }
+// o null si la tabla todavia no existe.
 async function leerClaves(token) {
   const url =
     "https://api.airtable.com/v0/" + BASE_ID + "/" + encodeURIComponent(TABLA_CLAVES) + "?pageSize=100";
@@ -84,42 +96,69 @@ async function leerClaves(token) {
   if (res.status === 404 || res.status === 403) return null;
   if (!res.ok) throw new Error("Airtable respondio " + res.status);
   const data = await res.json();
-  const mapa = {};
+  const filas = {};
+  let campoClave = null;
+  let campoValor = null;
   for (const r of data.records || []) {
     const f = r.fields || {};
-    const nombre = String(f.Name == null ? "" : f.Name).trim().toLowerCase();
-    if (nombre) mapa[nombre] = { id: r.id, valor: String(f.Notes == null ? "" : f.Notes).trim() };
+    campoClave = campoClave || campoPresente(f, CAMPOS_CLAVE);
+    campoValor = campoValor || campoPresente(f, CAMPOS_VALOR);
+    const bruto = campoClave ? f[campoClave] : null;
+    const nombre = String(bruto == null ? "" : bruto).trim().toLowerCase();
+    if (!nombre) continue;
+    const valor = campoValor ? f[campoValor] : null;
+    filas[nombre] = { id: r.id, valor: String(valor == null ? "" : valor).trim() };
   }
-  return mapa;
+  return { filas: filas, campoClave: campoClave, campoValor: campoValor };
 }
 
 // La contrasena de una seccion: la de la tabla si esta puesta, y si no la de
 // reserva guardada en Cloudflare.
-function claveDe(mapa, seccion, env) {
-  const fila = mapa && mapa[seccion];
+function claveDe(cfg, seccion, env) {
+  const fila = cfg && cfg.filas && cfg.filas[seccion];
   if (fila && fila.valor) return fila.valor;
   return env.DELETE_PASSWORD || "";
 }
 
-async function guardarClave(token, mapa, seccion, nueva) {
+async function guardarClave(token, cfg, seccion, nueva) {
   const base = "https://api.airtable.com/v0/" + BASE_ID + "/" + encodeURIComponent(TABLA_CLAVES);
-  const fila = mapa[seccion];
   const cabeceras = {
     Authorization: "Bearer " + token,
     "Content-Type": "application/json",
   };
+  const fila = cfg.filas[seccion];
+
   if (fila) {
+    const campo = cfg.campoValor || CAMPOS_VALOR[0];
+    const cuerpo = {};
+    cuerpo[campo] = nueva;
     return fetch(base + "/" + fila.id, {
       method: "PATCH",
       headers: cabeceras,
-      body: JSON.stringify({ fields: { Notes: nueva } }),
+      body: JSON.stringify({ fields: cuerpo }),
     });
   }
-  return fetch(base, {
-    method: "POST",
-    headers: cabeceras,
-    body: JSON.stringify({ records: [{ fields: { Name: seccion, Notes: nueva } }] }),
-  });
+
+  // Tabla vacia: no sabemos aun como se llaman las columnas, asi que probamos
+  // los nombres en ingles y, si Airtable los rechaza, los de la version en
+  // espanol.
+  const intentos = cfg.campoClave && cfg.campoValor
+    ? [[cfg.campoClave, cfg.campoValor]]
+    : [[CAMPOS_CLAVE[0], CAMPOS_VALOR[0]], [CAMPOS_CLAVE[1], CAMPOS_VALOR[1]]];
+
+  let ultima = null;
+  for (const [cClave, cValor] of intentos) {
+    const fields = {};
+    fields[cClave] = seccion;
+    fields[cValor] = nueva;
+    ultima = await fetch(base, {
+      method: "POST",
+      headers: cabeceras,
+      body: JSON.stringify({ records: [{ fields: fields }] }),
+    });
+    if (ultima.ok) return ultima;
+  }
+  return ultima;
 }
 
 async function leerAirtable(token) {
