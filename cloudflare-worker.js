@@ -6,7 +6,9 @@
 //   GET  /avisos  -> devuelve los avisos LEIDOS EN VIVO de Airtable, para que
 //                    el boton "Actualizar" traiga datos del momento y no la
 //                    copia que se regenera cada 5 minutos.
-//   POST /        -> comprueba la contrasena y borra un aviso en Airtable.
+//   POST /        -> comprueba la contrasena y, segun "accion":
+//                      "eliminar" (por defecto) -> borra el aviso en Airtable
+//                      "estado"                 -> lo pasa a Pendiente o Terminado
 //
 // Secretos que hay que configurar en Cloudflare (Settings -> Variables and
 // Secrets), marcados como "Secret":
@@ -138,6 +140,16 @@ export default {
 
     const password = body && body.password;
     const recordId = body && body.recordId;
+    // Sin "accion" se borra, como antes, para no romper nada que ya funcione.
+    const accion = body && body.accion ? String(body.accion) : "eliminar";
+
+    // Validamos la accion ANTES de la contrasena a proposito: asi se puede
+    // comprobar desde fuera, sin saber la contrasena, si esta desplegada esta
+    // version del Worker (una accion inventada responde 400 y no 401). No se
+    // filtra nada: solo dice que nombres de accion existen.
+    if (accion !== "eliminar" && accion !== "estado") {
+      return json(400, { error: "Accion desconocida" });
+    }
 
     if (!env.DELETE_PASSWORD) {
       return json(500, { error: "Falta DELETE_PASSWORD en el Worker" });
@@ -149,10 +161,36 @@ export default {
       return json(400, { error: "recordId invalido" });
     }
 
-    const res = await fetch(
-      "https://api.airtable.com/v0/" + BASE_ID + "/" + TABLE_ID + "/" + recordId,
-      { method: "DELETE", headers: { Authorization: "Bearer " + env.AIRTABLE_TOKEN } }
-    );
+    const registro = "https://api.airtable.com/v0/" + BASE_ID + "/" + TABLE_ID + "/" + recordId;
+
+    // --- Cambiar el estado del aviso (Pendiente <-> Terminado) ---
+    if (accion === "estado") {
+      const estado = body && body.estado;
+      if (estado !== "Pendiente" && estado !== "Terminado") {
+        return json(400, { error: "Estado invalido" });
+      }
+      const campos = {};
+      campos[F.ESTADO] = estado;
+      const res = await fetch(registro, {
+        method: "PATCH",
+        headers: {
+          Authorization: "Bearer " + env.AIRTABLE_TOKEN,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ fields: campos }),
+      });
+      if (!res.ok) {
+        const detail = await res.text();
+        return json(res.status, { error: "Airtable no pudo cambiar el estado", detail: detail });
+      }
+      return json(200, { ok: true, estado: estado });
+    }
+
+    // --- Borrar el aviso ---
+    const res = await fetch(registro, {
+      method: "DELETE",
+      headers: { Authorization: "Bearer " + env.AIRTABLE_TOKEN },
+    });
 
     if (!res.ok) {
       const detail = await res.text();
