@@ -234,7 +234,10 @@
   .attach-video-fallback .icon { width: 20px; height: 20px; flex: none; }
   .attach-item.attach-video .attach-info { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 
-  .detail-footer { margin-top: 4px; padding-top: 12px; border-top: 1px solid var(--line); display: flex; justify-content: flex-end; }
+  .detail-footer { margin-top: 4px; padding-top: 12px; border-top: 1px solid var(--line); display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+  .btn-ok { border-color: color-mix(in srgb, var(--ok) 45%, var(--line)); color: var(--ok); background: var(--surface); }
+  .btn-ok:hover { border-color: var(--ok); background: var(--ok-bg); color: var(--ok); }
+  .btn-ok:disabled { opacity: .55; cursor: default; }
   .btn-danger { border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); color: var(--danger); background: var(--surface); }
   .btn-danger:hover { border-color: var(--danger); background: var(--danger-bg); color: var(--danger); }
   .btn-danger:disabled { opacity: .55; cursor: default; }
@@ -360,7 +363,7 @@
 <div class="modal-overlay" id="deleteModal" hidden>
   <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="deleteModalTitle">
     <h3 id="deleteModalTitle">Eliminar aviso</h3>
-    <p>Esta acción borra el aviso también de Airtable y no se puede deshacer. Introduce la contraseña para confirmar.</p>
+    <p id="deleteModalDesc">Esta acción borra el aviso también de Airtable y no se puede deshacer. Introduce la contraseña para confirmar.</p>
     <div class="modal-field">
       <input type="password" class="modal-input" id="deletePassword" placeholder="Contraseña"
              autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
@@ -419,6 +422,8 @@
     deleteModal: document.getElementById("deleteModal"),
     deletePassword: document.getElementById("deletePassword"),
     deleteReveal: document.getElementById("deleteReveal"),
+    deleteModalTitle: document.getElementById("deleteModalTitle"),
+    deleteModalDesc: document.getElementById("deleteModalDesc"),
     deleteError: document.getElementById("deleteError"),
     deleteCancelBtn: document.getElementById("deleteCancelBtn"),
     deleteConfirmBtn: document.getElementById("deleteConfirmBtn")
@@ -458,7 +463,8 @@
     var q = f.q.trim().toLowerCase();
     var list = state.records.filter(function (r) {
       if (f.estado !== "todos" && r.estado !== f.estado) return false;
-      if (f.soloParada && r.paro !== "Sí") return false;
+      // "Solo con parada" = paradas que siguen activas; las ya terminadas no cuentan.
+      if (f.soloParada && !(r.paro === "Sí" && (r.estado || "Pendiente") !== "Terminado")) return false;
       if (q) {
         var hay = [r.cliente, r.emplazamiento, r.maquina, r.descripcion].join(" ").toLowerCase();
         if (hay.indexOf(q) === -1) return false;
@@ -520,6 +526,9 @@
     var isOpen = !!state.expanded[id];
     var estado = r.estado || "Pendiente";
     var paro = r.paro;
+    // Una parada solo esta activa mientras el aviso sigue pendiente: si ya se ha
+    // terminado, la maquina vuelve a funcionar y la etiqueta roja sobra.
+    var paroActivo = paro === "Sí" && estado !== "Terminado";
     var attachments = r.adjuntos || [];
 
     var collapsedRow =
@@ -529,7 +538,7 @@
           '<span class="row-top">' +
             '<span class="ticket-code mono">' + esc(ticketNumber(r)) + '</span>' +
             '<span class="row-badges">' +
-              (paro === "Sí" ? '<span class="tag tag-paro">Parada</span>' : "") +
+              (paroActivo ? '<span class="tag tag-paro">Parada</span>' : "") +
               (attachments.length ? '<span class="tag tag-media">' + (attachments.some(isVideoAttachment) ? ICONS.video : ICONS.image) + esc(attachmentsLabel(attachments)) + '</span>' : "") +
               '<span class="ticket-date">' + esc(fmtDateShort(r.fecha)) + '</span>' +
               '<svg class="icon chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>' +
@@ -545,7 +554,8 @@
       var rows = [
         ["Emplazamiento", esc(r.emplazamiento || "—")],
         ["Máquina", esc(r.maquina || "—")],
-        ["Con parada", paro === "Sí" ? '<span class="tag tag-paro">Sí</span>' : "No"],
+        ["Con parada", paro !== "Sí" ? "No" :
+          (paroActivo ? '<span class="tag tag-paro">Sí</span>' : 'Sí · ya resuelta')],
         ["Fecha", esc(fmtDate(r.fecha))],
         ["Reportado por", esc(r.reportado || "—")]
       ];
@@ -557,6 +567,9 @@
           '<div class="detail-desc"><h4>Descripción</h4><p>' + esc(r.descripcion || "Sin descripción.") + '</p></div>' +
           attachmentBlock(attachments) +
           '<div class="detail-footer">' +
+            (estado === "Terminado"
+              ? '<button class="btn" data-estado-id="' + esc(id) + '" data-estado="Pendiente">Volver a pendiente</button>'
+              : '<button class="btn btn-ok" data-estado-id="' + esc(id) + '" data-estado="Terminado">Marcar como terminado</button>') +
             '<button class="btn btn-danger" data-delete-id="' + esc(id) + '">Eliminar aviso</button>' +
           '</div>' +
         '</div>';
@@ -584,7 +597,17 @@
     Array.prototype.forEach.call(els.listArea.querySelectorAll("[data-delete-id]"), function (btn) {
       btn.addEventListener("click", function (ev) {
         ev.stopPropagation();
-        openDeleteModal(btn.getAttribute("data-delete-id"));
+        abrirModal({ tipo: "eliminar", id: btn.getAttribute("data-delete-id") });
+      });
+    });
+    Array.prototype.forEach.call(els.listArea.querySelectorAll("[data-estado-id]"), function (btn) {
+      btn.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        abrirModal({
+          tipo: "estado",
+          id: btn.getAttribute("data-estado-id"),
+          estado: btn.getAttribute("data-estado")
+        });
       });
     });
   }
@@ -683,7 +706,7 @@
   // nunca. Al pulsar "Actualizar" miramos que version hay publicada y, si es
   // distinta, recargamos saltandonos la cache. Solo una vez por sesion, para
   // que no pueda quedarse recargando en bucle.
-  var VERSION = "2026-09-08a";
+  var VERSION = "2026-09-29a";
   function comprobarVersion() {
     var yaRecargado = false;
     try { yaRecargado = sessionStorage.getItem("atia-recargado") === "1"; } catch (e) {}
@@ -703,13 +726,16 @@
 
   els.refreshBtn.addEventListener("click", function () { comprobarVersion(); loadData(true); });
 
-  // ---------- eliminar aviso ----------
+  // ---------- acciones sobre un aviso (eliminar / cambiar estado) ----------
   // URL del Worker de Cloudflare que guarda la contraseña y el token de
-  // Airtable en secreto y hace el borrado real. Hasta que esté desplegado,
+  // Airtable en secreto y hace el trabajo de verdad. Hasta que esté desplegado,
   // se deja vacío y el botón avisa en vez de fallar en silencio.
   var DELETE_ENDPOINT = "https://atia-borrar.elgrandonfrancisco.workers.dev";
 
-  var deleteTargetId = null;
+  // La accion pendiente de confirmar con la contrasena:
+  //   { tipo: "eliminar", id }
+  //   { tipo: "estado",   id, estado: "Terminado" | "Pendiente" }
+  var accionPendiente = null;
 
   // Iconos del botón "ver contraseña": ojo abierto = pulsa para mostrarla,
   // ojo tachado = ahora se ve, pulsa para volver a ocultarla.
@@ -739,8 +765,43 @@
     try { els.deletePassword.setSelectionRange(n, n); } catch (e) {}
   }
 
-  function openDeleteModal(id) {
-    deleteTargetId = id;
+  // Cada accion trae su propio titulo, explicacion y boton, pero todas pasan
+  // por el mismo dialogo de contrasena.
+  function textosDeAccion(accion) {
+    if (accion.tipo === "estado" && accion.estado === "Terminado") {
+      return {
+        titulo: "Marcar como terminado",
+        desc: "El aviso pasará a Terminado en Airtable y dejará de contar como pendiente. Introduce la contraseña para confirmar.",
+        boton: "Marcar terminado",
+        trabajando: "Guardando…",
+        clase: "btn btn-ok"
+      };
+    }
+    if (accion.tipo === "estado") {
+      return {
+        titulo: "Volver a pendiente",
+        desc: "El aviso volverá a Pendiente en Airtable y contará otra vez como abierto. Introduce la contraseña para confirmar.",
+        boton: "Volver a pendiente",
+        trabajando: "Guardando…",
+        clase: "btn"
+      };
+    }
+    return {
+      titulo: "Eliminar aviso",
+      desc: "Esta acción borra el aviso también de Airtable y no se puede deshacer. Introduce la contraseña para confirmar.",
+      boton: "Eliminar",
+      trabajando: "Eliminando…",
+      clase: "btn btn-danger"
+    };
+  }
+
+  function abrirModal(accion) {
+    accionPendiente = accion;
+    var t = textosDeAccion(accion);
+    els.deleteModalTitle.textContent = t.titulo;
+    els.deleteModalDesc.textContent = t.desc;
+    els.deleteConfirmBtn.textContent = t.boton;
+    els.deleteConfirmBtn.className = t.clase;
     // La contraseña siempre empieza oculta, aunque la dejaras visible la vez anterior.
     els.deletePassword.type = "password";
     pintarBotonVer();
@@ -752,13 +813,15 @@
 
   function closeDeleteModal() {
     els.deleteModal.hidden = true;
-    deleteTargetId = null;
+    accionPendiente = null;
   }
 
-  function confirmDelete() {
-    if (!deleteTargetId) return;
+  function confirmarAccion() {
+    if (!accionPendiente) return;
+    var accion = accionPendiente;
+    var t = textosDeAccion(accion);
     if (!DELETE_ENDPOINT) {
-      els.deleteError.textContent = "El borrado aún no está configurado.";
+      els.deleteError.textContent = "Esta acción aún no está configurada.";
       return;
     }
     // Los teclados de movil anaden a menudo un espacio al final al autocompletar.
@@ -770,12 +833,15 @@
     els.deleteError.textContent = "";
     els.deleteConfirmBtn.disabled = true;
     els.deleteCancelBtn.disabled = true;
-    els.deleteConfirmBtn.textContent = "Eliminando…";
+    els.deleteConfirmBtn.textContent = t.trabajando;
+
+    var cuerpo = { password: password, recordId: accion.id, accion: accion.tipo };
+    if (accion.tipo === "estado") cuerpo.estado = accion.estado;
 
     fetch(DELETE_ENDPOINT, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password: password, recordId: deleteTargetId })
+      body: JSON.stringify(cuerpo)
     })
       .then(function (res) {
         return res.json().catch(function () { return {}; }).then(function (data) {
@@ -784,11 +850,20 @@
         });
       })
       .then(function () {
-        state.records = state.records.filter(function (r) { return r.id !== deleteTargetId; });
-        delete state.expanded[deleteTargetId];
-        closeDeleteModal();
-        render();
-        els.statusText.textContent = "Aviso eliminado";
+        if (accion.tipo === "estado") {
+          for (var i = 0; i < state.records.length; i++) {
+            if (state.records[i].id === accion.id) { state.records[i].estado = accion.estado; break; }
+          }
+          closeDeleteModal();
+          render();
+          els.statusText.textContent = accion.estado === "Terminado" ? "Aviso terminado" : "Aviso reabierto";
+        } else {
+          state.records = state.records.filter(function (r) { return r.id !== accion.id; });
+          delete state.expanded[accion.id];
+          closeDeleteModal();
+          render();
+          els.statusText.textContent = "Aviso eliminado";
+        }
         if (statusResetTimer) clearTimeout(statusResetTimer);
         statusResetTimer = setTimeout(function () { els.statusText.textContent = "Actualizado"; }, 2600);
       })
@@ -804,20 +879,20 @@
         } else if (/Failed to fetch|NetworkError|Load failed/i.test(msg)) {
           els.deleteError.textContent = "Sin conexión. Comprueba internet y reinténtalo.";
         } else {
-          els.deleteError.textContent = "No se pudo eliminar: " + (msg || "error desconocido");
+          els.deleteError.textContent = "No se pudo completar: " + (msg || "error desconocido");
         }
       })
       .finally(function () {
         els.deleteConfirmBtn.disabled = false;
         els.deleteCancelBtn.disabled = false;
-        els.deleteConfirmBtn.textContent = "Eliminar";
+        els.deleteConfirmBtn.textContent = t.boton;
       });
   }
 
   els.deleteCancelBtn.addEventListener("click", closeDeleteModal);
   els.deleteModal.addEventListener("click", function (ev) { if (ev.target === els.deleteModal) closeDeleteModal(); });
-  els.deleteConfirmBtn.addEventListener("click", confirmDelete);
-  els.deletePassword.addEventListener("keydown", function (ev) { if (ev.key === "Enter") confirmDelete(); });
+  els.deleteConfirmBtn.addEventListener("click", confirmarAccion);
+  els.deletePassword.addEventListener("keydown", function (ev) { if (ev.key === "Enter") confirmarAccion(); });
   els.deleteReveal.addEventListener("click", alternarVerContrasena);
   pintarBotonVer();
   document.addEventListener("keydown", function (ev) { if (ev.key === "Escape" && !els.deleteModal.hidden) closeDeleteModal(); });
