@@ -11,11 +11,12 @@
 //                      "estado"                 -> lo pasa a Pendiente o Terminado
 //                      "cambiar-clave"          -> cambia la contrasena de una seccion
 //
-// Las contrasenas viven en una tabla de la propia base llamada "Claves":
-// la columna Name lleva el identificador ("eliminar" / "estado") y la columna
-// Notes la contrasena. Si esa tabla no existe todavia, o una fila esta vacia,
-// se usa DELETE_PASSWORD (el secreto de Cloudflare) como reserva, asi que
-// nada deja de funcionar mientras no se configure.
+// Las contrasenas viven en la propia tabla Registro, en una fila especial cuyo
+// Emplazamiento es "__CLAVES__" y que guarda un JSON en la Descripcion. Esa
+// fila se filtra en la web y en el generador, asi que nunca se ve como aviso.
+// Se hace asi porque la cuenta no puede crear tablas nuevas en la base.
+// Si la fila no existe, o una clave esta vacia, se usa DELETE_PASSWORD (el
+// secreto de Cloudflare) como reserva: nada deja de funcionar.
 //
 // Secretos que hay que configurar en Cloudflare (Settings -> Variables and
 // Secrets), marcados como "Secret":
@@ -24,14 +25,10 @@
 //                       (el de escritura sirve tambien para leer)
 
 const ALLOWED_ORIGIN = "https://nctrl12.github.io";
-// Tabla de contrasenas. Se direcciona por NOMBRE, no por id, para no tener que
-// tocar nada aqui si se recrea: basta con que exista una tabla asi llamada.
-const TABLA_CLAVES = "Claves";
+// Marca de la fila de configuracion dentro de la tabla Registro.
+const MARCA_CLAVES = "__CLAVES__";
+const AVISO_CLAVES = "No borrar: aqui se guardan las contrasenas de la web.";
 const SECCIONES = ["eliminar", "estado"];
-// Airtable crea las columnas por defecto con nombres distintos segun el idioma
-// de la cuenta, asi que aceptamos las dos formas y no obligamos a renombrar.
-const CAMPOS_CLAVE = ["Name", "Nombre"];
-const CAMPOS_VALOR = ["Notes", "Notas"];
 const BASE_ID = "appBQRwCmRwyzg180";
 const TABLE_ID = "tblj3eagIgj8WOc5d";
 
@@ -80,85 +77,66 @@ function text(v) {
   return typeof v === "string" ? v.trim() : String(v);
 }
 
-function campoPresente(fields, candidatos) {
-  for (const c of candidatos) {
-    if (Object.prototype.hasOwnProperty.call(fields, c)) return c;
-  }
-  return null;
-}
+const TABLA = "https://api.airtable.com/v0/" + BASE_ID + "/" + TABLE_ID;
 
-// Devuelve { filas: { eliminar: {id, valor}, ... }, campoClave, campoValor }
-// o null si la tabla todavia no existe.
+// Busca la fila de configuracion y devuelve { id, claves } o null si no existe.
 async function leerClaves(token) {
-  const url =
-    "https://api.airtable.com/v0/" + BASE_ID + "/" + encodeURIComponent(TABLA_CLAVES) + "?pageSize=100";
-  const res = await fetch(url, { headers: { Authorization: "Bearer " + token } });
-  if (res.status === 404 || res.status === 403) return null;
+  const url = new URL(TABLA);
+  url.searchParams.set("maxRecords", "1");
+  url.searchParams.set("returnFieldsByFieldId", "true");
+  url.searchParams.set("filterByFormula", '{Emplazamiento}="' + MARCA_CLAVES + '"');
+  const res = await fetch(url.toString(), { headers: { Authorization: "Bearer " + token } });
   if (!res.ok) throw new Error("Airtable respondio " + res.status);
   const data = await res.json();
-  const filas = {};
-  let campoClave = null;
-  let campoValor = null;
-  for (const r of data.records || []) {
-    const f = r.fields || {};
-    campoClave = campoClave || campoPresente(f, CAMPOS_CLAVE);
-    campoValor = campoValor || campoPresente(f, CAMPOS_VALOR);
-    const bruto = campoClave ? f[campoClave] : null;
-    const nombre = String(bruto == null ? "" : bruto).trim().toLowerCase();
-    if (!nombre) continue;
-    const valor = campoValor ? f[campoValor] : null;
-    filas[nombre] = { id: r.id, valor: String(valor == null ? "" : valor).trim() };
+  const fila = (data.records || [])[0];
+  if (!fila) return null;
+  let claves = {};
+  try {
+    const crudo = (fila.fields || {})[F.DESCRIPCION];
+    const leido = crudo ? JSON.parse(crudo) : null;
+    if (leido && typeof leido === "object") claves = leido;
+  } catch (e) {
+    claves = {};
   }
-  return { filas: filas, campoClave: campoClave, campoValor: campoValor };
+  return { id: fila.id, claves: claves };
 }
 
-// La contrasena de una seccion: la de la tabla si esta puesta, y si no la de
-// reserva guardada en Cloudflare.
+// La contrasena de una seccion: la guardada si esta puesta, y si no la de
+// reserva que vive en Cloudflare.
 function claveDe(cfg, seccion, env) {
-  const fila = cfg && cfg.filas && cfg.filas[seccion];
-  if (fila && fila.valor) return fila.valor;
+  const valor = cfg && cfg.claves ? cfg.claves[seccion] : null;
+  const limpio = typeof valor === "string" ? valor.trim() : "";
+  if (limpio) return limpio;
   return env.DELETE_PASSWORD || "";
 }
 
 async function guardarClave(token, cfg, seccion, nueva) {
-  const base = "https://api.airtable.com/v0/" + BASE_ID + "/" + encodeURIComponent(TABLA_CLAVES);
   const cabeceras = {
     Authorization: "Bearer " + token,
     "Content-Type": "application/json",
   };
-  const fila = cfg.filas[seccion];
+  const claves = Object.assign({}, (cfg && cfg.claves) || {});
+  claves[seccion] = nueva;
+  const campos = {};
+  campos[F.DESCRIPCION] = JSON.stringify(claves);
 
-  if (fila) {
-    const campo = cfg.campoValor || CAMPOS_VALOR[0];
-    const cuerpo = {};
-    cuerpo[campo] = nueva;
-    return fetch(base + "/" + fila.id, {
+  if (cfg && cfg.id) {
+    return fetch(TABLA + "/" + cfg.id, {
       method: "PATCH",
       headers: cabeceras,
-      body: JSON.stringify({ fields: cuerpo }),
+      body: JSON.stringify({ fields: campos }),
     });
   }
 
-  // Tabla vacia: no sabemos aun como se llaman las columnas, asi que probamos
-  // los nombres en ingles y, si Airtable los rechaza, los de la version en
-  // espanol.
-  const intentos = cfg.campoClave && cfg.campoValor
-    ? [[cfg.campoClave, cfg.campoValor]]
-    : [[CAMPOS_CLAVE[0], CAMPOS_VALOR[0]], [CAMPOS_CLAVE[1], CAMPOS_VALOR[1]]];
-
-  let ultima = null;
-  for (const [cClave, cValor] of intentos) {
-    const fields = {};
-    fields[cClave] = seccion;
-    fields[cValor] = nueva;
-    ultima = await fetch(base, {
-      method: "POST",
-      headers: cabeceras,
-      body: JSON.stringify({ records: [{ fields: fields }] }),
-    });
-    if (ultima.ok) return ultima;
-  }
-  return ultima;
+  // Primera vez: creamos la fila de configuracion, bien marcada para que se
+  // entienda en Airtable que no es un aviso y que no hay que borrarla.
+  campos[F.EMPLAZAMIENTO] = MARCA_CLAVES;
+  campos[F.CLIENTE] = AVISO_CLAVES;
+  return fetch(TABLA, {
+    method: "POST",
+    headers: cabeceras,
+    body: JSON.stringify({ records: [{ fields: campos }] }),
+  });
 }
 
 async function leerAirtable(token) {
@@ -175,6 +153,11 @@ async function leerAirtable(token) {
     all = all.concat(data.records || []);
     offset = data.offset;
   } while (offset);
+
+  // Fuera la fila de configuracion: no es un aviso.
+  all = all.filter(function (r) {
+    return String(((r.fields || {})[F.EMPLAZAMIENTO]) || "").trim() !== MARCA_CLAVES;
+  });
 
   const records = all.map(function (r) {
     const cv = r.fields || {};
@@ -275,12 +258,6 @@ export default {
       if (limpia.length < 4) {
         return json(400, { error: "La contrasena nueva necesita al menos 4 caracteres" });
       }
-      if (claves === null) {
-        return json(409, {
-          error:
-            'Falta la tabla "Claves" en Airtable. Crea una tabla con ese nombre en la base y vuelve a intentarlo.',
-        });
-      }
       const res = await guardarClave(env.AIRTABLE_TOKEN, claves, seccion, limpia);
       if (!res.ok) {
         const detail = await res.text();
@@ -296,7 +273,12 @@ export default {
       return json(400, { error: "recordId invalido" });
     }
 
-    const registro = "https://api.airtable.com/v0/" + BASE_ID + "/" + TABLE_ID + "/" + recordId;
+    // Por si acaso: la fila de configuracion no es un aviso y no se toca.
+    if (claves && claves.id === recordId) {
+      return json(400, { error: "Ese registro no es un aviso" });
+    }
+
+    const registro = TABLA + "/" + recordId;
 
     // --- Cambiar el estado del aviso (Pendiente <-> Terminado) ---
     if (accion === "estado") {
