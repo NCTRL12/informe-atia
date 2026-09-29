@@ -66,8 +66,17 @@ async function fetchAllRecords() {
   return all;
 }
 
-const raw = await fetchAllRecords();
-console.log(`Descargados ${raw.length} registros de Airtable.`);
+const todos = await fetchAllRecords();
+
+// La fila con Emplazamiento "__CLAVES__" guarda las contraseñas de la web, no
+// es un aviso: se queda fuera de data.json para que nunca salga en la lista.
+const MARCA_CLAVES = "__CLAVES__";
+const raw = todos.filter(
+  (r) => String((r.fields || {})[F.EMPLAZAMIENTO] || "").trim() !== MARCA_CLAVES
+);
+console.log(
+  `Descargados ${todos.length} registros de Airtable (${todos.length - raw.length} de configuración, fuera).`
+);
 
 const records = raw.map((r) => {
   const cv = r.fields || {};
